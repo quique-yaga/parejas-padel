@@ -379,10 +379,10 @@
       <div class="field"><label for="p4">Jugador 4</label><input id="p4" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false" enterkeyhint="go" maxlength="20" value="Javi"></div>
     </div>
     <p class="error" id="error" role="alert" hidden></p>
-    <button type="submit" class="go" id="go">Sortear parejas</button>
+    <button type="submit" class="go" id="go">Crear sorteo</button>
   </form>
 
-  <p class="status" id="status" aria-live="polite">Pulsa el botón para sortear</p>
+  <p class="status" id="status" aria-live="polite">Nadie ve el resultado hasta abrir el enlace</p>
 
   <div class="court-wrap">
     <section class="court" id="court" aria-label="Pista">
@@ -406,12 +406,13 @@
   </div>
 
   <section class="panel" id="share" hidden>
-    <h2>Envíalo al grupo</h2>
-    <p class="meta">Quien abra el enlace verá la misma ruleta y el mismo resultado. El mensaje no desvela las parejas.</p>
+    <h2>Sorteo creado. Envíalo al grupo</h2>
+    <p class="meta">Tú tampoco has visto el resultado. Quien abra el enlace verá la misma ruleta y las mismas parejas.</p>
     <div class="btn-row">
       <a class="btn wa" id="waShare" href="#" target="_blank" rel="noopener">Enviar por WhatsApp</a>
       <button type="button" class="btn" id="copy">Copiar enlace</button>
     </div>
+    <button type="button" class="btn" id="watchOwn">Ver la ruleta (mejor con el grupo)</button>
     <input class="linkbox" id="linkBox" readonly aria-label="Enlace del sorteo" hidden>
   </section>
 
@@ -425,7 +426,7 @@
     </div>
   </section>
 
-  <p class="note" id="note">Con 4 jugadores hay 3 combinaciones posibles. Cada sorteo da una distinta a la anterior. Los nombres van dentro del enlace y no se guardan en ningún servidor.</p>
+  <p class="note" id="note">El resultado se decide al crear el sorteo y nadie lo ve hasta abrir el enlace, tampoco quien lo crea. Los nombres van dentro del enlace y no se guardan en ningún servidor.</p>
 </div>
 
 <script>
@@ -443,7 +444,6 @@
     [[0, 2], [1, 3]],
     [[0, 3], [1, 2]],
   ];
-  let last = -1;
   let busy = false;
 
   try {
@@ -665,11 +665,6 @@
     return names;
   }
 
-  function closeKeyboardAndShowCourt() {
-    if (document.activeElement) document.activeElement.blur();
-    setTimeout(() => statusEl.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" }), 80);
-  }
-
   function reveal(el) {
     el.hidden = false;
     setTimeout(() => el.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "nearest" }), reduced ? 0 : 900);
@@ -728,29 +723,29 @@
     const names = readNames();
     if (!names) return;
     try { localStorage.setItem(KEY, JSON.stringify(names)); } catch (e) {}
-    closeKeyboardAndShowCourt();
-    shareEl.hidden = true;
+    if (document.activeElement) document.activeElement.blur();
     linkBox.hidden = true;
 
-    // Decide the result first, then put on the show.
-    let pick;
-    do { pick = Math.floor(Math.random() * 3); } while (pick === last);
-    last = pick;
+    // Decide the result now, but do not show it. Everyone, the organiser included,
+    // only sees it by opening the link.
+    const pick = Math.floor(Math.random() * 3);
     let [a, b] = SPLITS[pick];
     if (Math.random() < 0.5) [a, b] = [b, a];
     if (Math.random() < 0.5) a = [a[1], a[0]];
     if (Math.random() < 0.5) b = [b[1], b[0]];
     const d = { p: names, r: [a[0], a[1], b[0], b[1]], t: Math.floor(Date.now() / 60000) };
 
-    await play(resultOf(d));
-    goBtn.textContent = "Sortear otra vez";
-
     const link = linkFor(d);
-    const text = "🎾 Ya está el sorteo de parejas de pádel. Ábrelo para ver la ruleta: " + link;
+    const text = "🎾 Ya está el sorteo de parejas de pádel. Nadie ha visto el resultado. Ábrelo para ver la ruleta: " + link;
     waShare.href = "https://wa.me/?text=" + encodeURIComponent(text);
     linkBox.value = link;
-    reveal(shareEl);
+    goBtn.textContent = "Crear otro sorteo";
+    statusEl.textContent = "Sorteo listo. Nadie lo ha visto todavía";
+    shareEl.hidden = false;
+    setTimeout(() => shareEl.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" }), 80);
   }
+
+  $("watchOwn").addEventListener("click", () => { location.hash = linkBox.value.split("#")[1]; });
 
   copyBtn.addEventListener("click", async () => {
     try {
@@ -766,7 +761,6 @@
 
   formEl.addEventListener("submit", e => {
     e.preventDefault();
-    unlockAudio();
     draw();
   });
 
