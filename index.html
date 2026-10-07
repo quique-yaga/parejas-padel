@@ -359,7 +359,7 @@
   <header>
     <div class="titles">
       <h1>Parejas de Pádel</h1>
-      <p id="tagline">Escribe 4 nombres. La ruleta decide.</p>
+      <p id="tagline">Solo uno escribe los 4 nombres y sortea. Los demás abren el enlace que les llega.</p>
     </div>
     <button type="button" class="sound" id="sound" aria-pressed="true">🔊 Sí</button>
   </header>
@@ -470,28 +470,67 @@
   soundBtn.addEventListener("click", () => {
     soundOn = !soundOn;
     paintSound();
-    if (soundOn) unlockAudio();
+    if (soundOn) { unlockAudio(); beep(880, 0.08); setTimeout(stopKeepAlive, 400); } else stopKeepAlive();
     try { localStorage.setItem(SOUND_KEY, soundOn ? "on" : "off"); } catch (e) {}
   });
 
   let actx = null;
-  // Phones only allow audio that starts from a tap, so create/resume it inside the tap handler.
+  let keepAlive = null;
+
+  // A short silent WAV, built in memory. Playing it through an <audio> tag moves iPhones
+  // into "media playback" mode, so the beeps are heard even with the silent switch on.
+  function silentWavUrl() {
+    const n = 8000, buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+    const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    str(0, "RIFF"); v.setUint32(4, 36 + n, true); str(8, "WAVE"); str(12, "fmt ");
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+    str(36, "data"); v.setUint32(40, n, true);
+    for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+    return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  }
+
+  // Phones only allow audio that starts from a tap, so all of this runs inside the tap handler.
   function unlockAudio() {
     if (!soundOn) return;
     try {
-      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-      if (actx.state === "suspended") actx.resume();
+      // Safari 17+ (iPhone): treat our sound as media, not as a ringtone that the silent switch mutes.
+      if (navigator.audioSession) navigator.audioSession.type = "playback";
     } catch (e) {}
+    try {
+      if (!keepAlive) {
+        keepAlive = new Audio(silentWavUrl());
+        keepAlive.loop = true;
+        keepAlive.setAttribute("playsinline", "");
+      }
+      const p = keepAlive.play();
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) {}
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state !== "running") actx.resume();
+      // Play one silent sample right away, which is what fully wakes Web Audio on iOS.
+      const b = actx.createBuffer(1, 1, 22050), src = actx.createBufferSource();
+      src.buffer = b;
+      src.connect(actx.destination);
+      src.start(0);
+    } catch (e) {}
+  }
+  function stopKeepAlive() {
+    try { if (keepAlive) keepAlive.pause(); } catch (e) {}
   }
   function beep(freq, dur = 0.05, type = "square", vol = 0.05) {
     if (!soundOn || !actx) return;
     try {
+      // iOS pauses audio when you switch apps (e.g. to WhatsApp and back).
+      if (actx.state !== "running") actx.resume();
       const o = actx.createOscillator(), g = actx.createGain();
       o.type = type;
       o.frequency.value = freq;
       g.gain.setValueAtTime(vol, actx.currentTime);
       g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
-      o.connect(g).connect(actx.destination);
+      o.connect(g);
+      g.connect(actx.destination);
       o.start();
       o.stop(actx.currentTime + dur);
     } catch (e) {}
@@ -641,6 +680,7 @@
     if (reduced) {
       slots.forEach((s, i) => setSlot(s, result[i], ""));
       statusEl.textContent = "¡Partido!";
+      stopKeepAlive();
       return;
     }
 
@@ -675,6 +715,7 @@
     statusEl.textContent = "¡Partido!";
     fanfare();
     confetti();
+    setTimeout(stopKeepAlive, 1200);
 
     busy = false;
     goBtn.disabled = false;
