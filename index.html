@@ -34,6 +34,8 @@
     --ball-ink: #1b2a06;
     --focus: #1f5fa8;
     --error: #c0392b;
+    --wa: #25d366;
+    --wa-ink: #05311a;
     --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
     --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
     color-scheme: light;
@@ -47,6 +49,7 @@
   }
 
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body {
     margin: 0;
@@ -277,6 +280,67 @@
 
   .note { margin: 0; color: var(--muted); font-size: 0.85rem; text-align: center; }
 
+  /* Panels: the "you got a draw" intro, the share box and the "who are you" box */
+  .panel {
+    background: var(--surface);
+    border: 1.5px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+    scroll-margin-top: calc(12px + env(safe-area-inset-top));
+  }
+  .panel h2 {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: 1.45rem;
+    line-height: 1.1;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  .meta { margin: 0; color: var(--muted); font-size: 0.95rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    background: var(--bg);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .btn {
+    min-height: 48px;
+    min-width: 0;
+    font: inherit;
+    font-weight: 600;
+    line-height: 1.2;
+    border: 1.5px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    text-decoration: none;
+    padding: 10px 14px;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+  .btn.wa { background: var(--wa); color: var(--wa-ink); border-color: transparent; }
+  .linkbox {
+    font: inherit;
+    font-size: 16px;
+    width: 100%;
+    color: var(--fg);
+    background: var(--bg);
+    border: 1.5px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+
   @media (min-width: 600px) {
     .wrap { padding-top: calc(36px + env(safe-area-inset-top)); gap: 22px; }
     .go { width: auto; justify-self: start; }
@@ -295,10 +359,17 @@
   <header>
     <div class="titles">
       <h1>Parejas de Pádel</h1>
-      <p>Escribe 4 nombres. La ruleta decide.</p>
+      <p id="tagline">Escribe 4 nombres. La ruleta decide.</p>
     </div>
     <button type="button" class="sound" id="sound" aria-pressed="true">🔊 Sí</button>
   </header>
+
+  <section class="panel" id="viewer" hidden>
+    <h2>Te han enviado un sorteo</h2>
+    <div class="chips" id="chips"></div>
+    <p class="meta" id="when"></p>
+    <button type="button" class="go" id="watch">Ver el sorteo</button>
+  </section>
 
   <form id="form" novalidate>
     <div class="names">
@@ -334,7 +405,27 @@
     <canvas class="fx" id="fx" aria-hidden="true"></canvas>
   </div>
 
-  <p class="note">Con 4 jugadores hay 3 combinaciones posibles. Cada sorteo da una distinta a la anterior. Los nombres solo se guardan en este móvil.</p>
+  <section class="panel" id="share" hidden>
+    <h2>Envíalo al grupo</h2>
+    <p class="meta">Quien abra el enlace verá la misma ruleta y el mismo resultado. El mensaje no desvela las parejas.</p>
+    <div class="btn-row">
+      <a class="btn wa" id="waShare" href="#" target="_blank" rel="noopener">Enviar por WhatsApp</a>
+      <button type="button" class="btn" id="copy">Copiar enlace</button>
+    </div>
+    <input class="linkbox" id="linkBox" readonly aria-label="Enlace del sorteo" hidden>
+  </section>
+
+  <section class="panel" id="confirm" hidden>
+    <h2>¿Quién eres?</h2>
+    <p class="meta">Pulsa tu nombre para confirmar en el grupo que juegas.</p>
+    <div class="btn-row" id="whoBtns"></div>
+    <div class="btn-row">
+      <button type="button" class="btn" id="replay">Ver otra vez</button>
+      <button type="button" class="btn" id="newDraw">Hacer un sorteo nuevo</button>
+    </div>
+  </section>
+
+  <p class="note" id="note">Con 4 jugadores hay 3 combinaciones posibles. Cada sorteo da una distinta a la anterior. Los nombres van dentro del enlace y no se guardan en ningún servidor.</p>
 </div>
 
 <script>
@@ -485,7 +576,38 @@
     requestAnimationFrame(frame);
   }
 
-  /* ---------- The draw ---------- */
+  /* ---------- Shareable link: the draw travels inside the URL hash ---------- */
+  // The hash never reaches the server, so names are not stored anywhere but in the link itself.
+  // Format: #s=<base64url of {"p":[4 names in typed order],"r":[4 indexes A1,A2,B1,B2],"t":minutes since epoch}>
+  function encodeDraw(d) {
+    const bytes = new TextEncoder().encode(JSON.stringify(d));
+    let bin = "";
+    bytes.forEach(b => { bin += String.fromCharCode(b); });
+    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function decodeDraw(s) {
+    try {
+      const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+      const d = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0))));
+      const ok = Array.isArray(d.p) && d.p.length === 4
+        && d.p.every(n => typeof n === "string" && n.trim() && n.length <= 20)
+        && new Set(d.p.map(n => n.trim().toLowerCase())).size === 4
+        && Array.isArray(d.r) && d.r.length === 4
+        && [...d.r].sort().join() === "0,1,2,3";
+      return ok ? { p: d.p.map(n => n.trim()), r: d.r, t: Number(d.t) || 0 } : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  const linkFor = d => location.origin + location.pathname + "#s=" + encodeDraw(d);
+  const resultOf = d => d.r.map(i => d.p[i]);
+
+  /* ---------- Elements for the share and confirm steps ---------- */
+  const viewerEl = $("viewer"), formEl = $("form"), shareEl = $("share"), confirmEl = $("confirm");
+  const chipsEl = $("chips"), whenEl = $("when"), watchBtn = $("watch");
+  const waShare = $("waShare"), copyBtn = $("copy"), linkBox = $("linkBox");
+  const whoBtns = $("whoBtns"), taglineEl = $("tagline");
+
   function readNames() {
     const names = inputs.map(i => i.value.trim());
     const missing = names.findIndex(n => !n);
@@ -504,49 +626,40 @@
     return names;
   }
 
-  async function draw() {
-    if (busy) return;
-    const names = readNames();
-    if (!names) return;
-    try { localStorage.setItem(KEY, JSON.stringify(names)); } catch (e) {}
-
-    // Close the phone keyboard and bring the court into view.
+  function closeKeyboardAndShowCourt() {
     if (document.activeElement) document.activeElement.blur();
     setTimeout(() => statusEl.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" }), 80);
+  }
 
-    // Decide the result first, then put on the show.
-    let pick;
-    do { pick = Math.floor(Math.random() * 3); } while (pick === last);
-    last = pick;
-    let [a, b] = SPLITS[pick];
-    if (Math.random() < 0.5) [a, b] = [b, a];
-    if (Math.random() < 0.5) a = [a[1], a[0]];
-    if (Math.random() < 0.5) b = [b[1], b[0]];
-    const result = [names[a[0]], names[a[1]], names[b[0]], names[b[1]]];
+  function reveal(el) {
+    el.hidden = false;
+    setTimeout(() => el.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "nearest" }), reduced ? 0 : 900);
+  }
 
+  /* ---------- The show: plays the ruleta for an already decided result ---------- */
+  async function play(result) {
     if (reduced) {
       slots.forEach((s, i) => setSlot(s, result[i], ""));
       statusEl.textContent = "¡Partido!";
-      goBtn.textContent = "Otra vez";
       return;
     }
 
     busy = true;
     goBtn.disabled = true;
+    watchBtn.disabled = true;
     statusEl.classList.add("pulse");
 
-    // 1. Everything spins.
+    // 1. The first name spins.
     statusEl.textContent = "Girando la ruleta…";
     slots.forEach(s => setSlot(s, "?", "empty"));
-    await spin([slots[0]], names, 1300);
+    await spin([slots[0]], [...result].sort(() => Math.random() - 0.5), 1300);
     lock(slots[0], result[0]);
     bump(court, "shake");
 
     // 2. The big moment: who plays with the first player?
     statusEl.textContent = "¿Con quién juega " + result[0] + "?";
     await wait(500);
-    const others = names.filter(n => n !== result[0]);
-    await spin([slots[1]], others, 2600);
+    await spin([slots[1]], result.slice(1), 2600);
     lock(slots[1], result[1]);
     bump(court, "shake");
     await wait(450);
@@ -565,14 +678,119 @@
 
     busy = false;
     goBtn.disabled = false;
-    goBtn.textContent = "Otra vez";
+    watchBtn.disabled = false;
   }
 
-  $("form").addEventListener("submit", e => {
+  /* ---------- Organiser: types names, draws, shares the link ---------- */
+  async function draw() {
+    if (busy) return;
+    const names = readNames();
+    if (!names) return;
+    try { localStorage.setItem(KEY, JSON.stringify(names)); } catch (e) {}
+    closeKeyboardAndShowCourt();
+    shareEl.hidden = true;
+    linkBox.hidden = true;
+
+    // Decide the result first, then put on the show.
+    let pick;
+    do { pick = Math.floor(Math.random() * 3); } while (pick === last);
+    last = pick;
+    let [a, b] = SPLITS[pick];
+    if (Math.random() < 0.5) [a, b] = [b, a];
+    if (Math.random() < 0.5) a = [a[1], a[0]];
+    if (Math.random() < 0.5) b = [b[1], b[0]];
+    const d = { p: names, r: [a[0], a[1], b[0], b[1]], t: Math.floor(Date.now() / 60000) };
+
+    await play(resultOf(d));
+    goBtn.textContent = "Sortear otra vez";
+
+    const link = linkFor(d);
+    const text = "🎾 Ya está el sorteo de parejas de pádel. Ábrelo para ver la ruleta: " + link;
+    waShare.href = "https://wa.me/?text=" + encodeURIComponent(text);
+    linkBox.value = link;
+    reveal(shareEl);
+  }
+
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(linkBox.value);
+      copyBtn.textContent = "Copiado ✓";
+      setTimeout(() => { copyBtn.textContent = "Copiar enlace"; }, 2000);
+    } catch (e) {
+      linkBox.hidden = false;
+      linkBox.focus();
+      linkBox.select();
+    }
+  });
+
+  formEl.addEventListener("submit", e => {
     e.preventDefault();
     unlockAudio();
     draw();
   });
+
+  /* ---------- Player: opens a shared link and watches the same draw ---------- */
+  function startViewer(d) {
+    const result = resultOf(d);
+    formEl.hidden = true;
+    viewerEl.hidden = false;
+    taglineEl.textContent = "Mira la ruleta y confirma que juegas.";
+    statusEl.textContent = "Pulsa «Ver el sorteo»";
+
+    chipsEl.replaceChildren(...d.p.map(n => {
+      const c = document.createElement("span");
+      c.className = "chip";
+      c.textContent = n;
+      return c;
+    }));
+    if (d.t) {
+      const when = new Date(d.t * 60000).toLocaleString("es-ES", {
+        weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+      });
+      whenEl.textContent = "Sorteo hecho el " + when + ".";
+    }
+
+    const match = result[0] + " y " + result[1] + " contra " + result[2] + " y " + result[3];
+    whoBtns.replaceChildren(...d.p.map(n => {
+      const a = document.createElement("a");
+      a.className = "btn wa";
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "Soy " + n;
+      a.href = "https://wa.me/?text=" + encodeURIComponent("✅ Soy " + n + " y me apunto. 🎾 " + match + ".");
+      return a;
+    }));
+
+    async function watch() {
+      if (busy) return;
+      unlockAudio();
+      confirmEl.hidden = true;
+      viewerEl.hidden = true;
+      statusEl.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+      await play(result);
+      reveal(confirmEl);
+    }
+    watchBtn.addEventListener("click", watch);
+    $("replay").addEventListener("click", watch);
+    $("newDraw").addEventListener("click", () => {
+      try { localStorage.setItem(KEY, JSON.stringify(d.p)); } catch (e) {}
+      history.replaceState(null, "", location.pathname);
+      location.reload();
+    });
+  }
+
+  const m = location.hash.match(/^#s=([A-Za-z0-9_-]+)$/);
+  if (m) {
+    const d = decodeDraw(m[1]);
+    if (d) {
+      startViewer(d);
+    } else {
+      errorEl.textContent = "Este enlace de sorteo no funciona. Puedes hacer un sorteo nuevo aquí.";
+      errorEl.hidden = false;
+      history.replaceState(null, "", location.pathname);
+    }
+  }
+  window.addEventListener("hashchange", () => location.reload());
 </script>
 </body>
 </html>
