@@ -329,6 +329,20 @@
   }
   .btn:active { transform: translateY(1px); }
   .btn:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+  .panel .go { width: 100%; justify-self: stretch; }
+  .textbtn {
+    justify-self: center;
+    min-height: 44px;
+    font: inherit;
+    font-size: 0.95rem;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+  .textbtn:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
   .btn.wa { background: var(--wa); color: var(--wa-ink); border-color: transparent; }
   .linkbox {
     font: inherit;
@@ -382,7 +396,20 @@
     <button type="submit" class="go" id="go">Crear sorteo</button>
   </form>
 
-  <p class="status" id="status" aria-live="polite">Nadie ve el resultado hasta abrir el enlace</p>
+  <section class="panel" id="share" hidden>
+    <h2>Sorteo listo</h2>
+    <div class="chips" id="ownChips"></div>
+    <p class="meta">Nadie ha visto el resultado, tampoco tú. Si no estáis juntos, manda el enlace al grupo y cada uno lo verá en su móvil.</p>
+    <div class="btn-row">
+      <a class="btn wa" id="waShare" href="#" target="_blank" rel="noopener">Enviar por WhatsApp</a>
+      <button type="button" class="btn" id="copy">Copiar enlace</button>
+    </div>
+    <input class="linkbox" id="linkBox" readonly aria-label="Enlace del sorteo" hidden>
+    <button type="button" class="go" id="reveal">Sortear</button>
+    <button type="button" class="textbtn" id="editNames">Cambiar nombres</button>
+  </section>
+
+  <p class="status" id="status" aria-live="polite">Nadie ve el resultado hasta pulsar Sortear</p>
 
   <div class="court-wrap">
     <section class="court" id="court" aria-label="Pista">
@@ -404,17 +431,6 @@
     </section>
     <canvas class="fx" id="fx" aria-hidden="true"></canvas>
   </div>
-
-  <section class="panel" id="share" hidden>
-    <h2>Sorteo creado. Envíalo al grupo</h2>
-    <p class="meta">Tú tampoco has visto el resultado. Quien abra el enlace verá la misma ruleta y las mismas parejas.</p>
-    <div class="btn-row">
-      <a class="btn wa" id="waShare" href="#" target="_blank" rel="noopener">Enviar por WhatsApp</a>
-      <button type="button" class="btn" id="copy">Copiar enlace</button>
-    </div>
-    <button type="button" class="btn" id="watchOwn">Ver la ruleta (mejor con el grupo)</button>
-    <input class="linkbox" id="linkBox" readonly aria-label="Enlace del sorteo" hidden>
-  </section>
 
   <section class="panel" id="confirm" hidden>
     <h2>¿Quién eres?</h2>
@@ -647,6 +663,13 @@
   const waShare = $("waShare"), copyBtn = $("copy"), linkBox = $("linkBox");
   const whoBtns = $("whoBtns"), taglineEl = $("tagline");
 
+  function chip(n) {
+    const c = document.createElement("span");
+    c.className = "chip";
+    c.textContent = n;
+    return c;
+  }
+
   function readNames() {
     const names = inputs.map(i => i.value.trim());
     const missing = names.findIndex(n => !n);
@@ -739,13 +762,37 @@
     const text = "🎾 Ya está el sorteo de parejas de pádel. Nadie ha visto el resultado. Ábrelo para ver la ruleta: " + link;
     waShare.href = "https://wa.me/?text=" + encodeURIComponent(text);
     linkBox.value = link;
-    goBtn.textContent = "Crear otro sorteo";
-    statusEl.textContent = "Sorteo listo. Nadie lo ha visto todavía";
+    current = d;
+    $("ownChips").replaceChildren(...names.map(chip));
+    revealBtn.textContent = "Sortear";
+    statusEl.textContent = "Pulsa Sortear cuando estéis listos";
+    slots.forEach(sl => setSlot(sl, "?", "empty"));
+    formEl.hidden = true;
     shareEl.hidden = false;
-    setTimeout(() => shareEl.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" }), 80);
+    setTimeout(() => window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" }), 80);
   }
 
-  $("watchOwn").addEventListener("click", () => { location.hash = linkBox.value.split("#")[1]; });
+  let current = null;
+  const revealBtn = $("reveal");
+  revealBtn.addEventListener("click", async () => {
+    if (busy || !current) return;
+    unlockAudio();
+    revealBtn.disabled = true;
+    statusEl.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+    await play(resultOf(current));
+    revealBtn.disabled = false;
+    revealBtn.textContent = "Ver otra vez";
+  });
+
+  $("editNames").addEventListener("click", () => {
+    if (busy) return;
+    current = null;
+    shareEl.hidden = true;
+    formEl.hidden = false;
+    slots.forEach(sl => setSlot(sl, "?", "empty"));
+    statusEl.textContent = "Nadie ve el resultado hasta pulsar Sortear";
+    inputs[0].focus();
+  });
 
   copyBtn.addEventListener("click", async () => {
     try {
@@ -772,12 +819,7 @@
     taglineEl.textContent = "Mira la ruleta y confirma que juegas.";
     statusEl.textContent = "Pulsa «Ver el sorteo»";
 
-    chipsEl.replaceChildren(...d.p.map(n => {
-      const c = document.createElement("span");
-      c.className = "chip";
-      c.textContent = n;
-      return c;
-    }));
+    chipsEl.replaceChildren(...d.p.map(chip));
     if (d.t) {
       const when = new Date(d.t * 60000).toLocaleString("es-ES", {
         weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
